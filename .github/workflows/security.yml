@@ -37,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
         with:
@@ -47,36 +46,29 @@ jobs:
             p/owasp-top-ten
 
   # ═══════════════════════════════════════
-  # 3. SCA - CORRIGÉ pour toujours sauvegarder le rapport
+  # 3. SCA
   # ═══════════════════════════════════════
   sca:
     name: 📦 SCA
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-      
       - name: Install dependencies
         working-directory: ./src
         run: npm install
-      
-      # ✅ CORRECTION: Sauvegarde le JSON même si npm audit échoue
       - name: npm audit JSON
         working-directory: ./src
         run: npm audit --json > audit.json || true
-      
-      # ✅ CORRECTION: Affiche et échoue sur les vulnérabilités
       - name: npm audit display
         working-directory: ./src
         run: npm audit
-      
       - name: Upload audit report
         uses: actions/upload-artifact@v4
-        if: always()  # ← Toujours uploader même si échec
+        if: always()
         with:
           name: npm-audit
           path: src/audit.json
@@ -91,14 +83,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ═══════════════════════════════════════
-  # 5. CONTAINER SCAN - CORRIGÉ pour analyse
+  # 5. CONTAINER SCAN
   # ═══════════════════════════════════════
   container-scan:
     name: 🐳 Container Scan
@@ -108,75 +99,35 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: docker-image
-      
       - name: Load image
         run: docker load < image.tar
-      
-      # ✅ CORRECTION: exit-code '0' pour voir les résultats sans échec
       - name: Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: vuln-app:${{ github.sha }}
           format: 'table'
-          exit-code: '0'          # ← '0' pour analyse, '1' pour bloquer
+          exit-code: '0'
           severity: 'CRITICAL,HIGH'
 
   # ═══════════════════════════════════════
-  # 6. RAPPORT FINAL - CORRIGÉ pour toujours générer
-  # ═══════════════════════════════════════
-  report:
-    name: 📊 Report
-    runs-on: ubuntu-latest
-    needs: [sast, sca, secrets, container-scan, codeql]
-    if: always()
-    steps:
-      - name: Generate Report
-        run: |
-          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| SAST | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SCA | ${{ needs.sca.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Secrets | ${{ needs.secrets.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Container | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # ✅ CORRECTION: Ne fait pas échouer le job (pour l'analyse)
-            if [[ "${{ needs.sast.result }}" == "failure" ]] || \
-                [[ "${{ needs.sca.result }}" == "failure" ]] || \
-                [[ "${{ needs.secrets.result }}" == "failure" ]] || \
-                [[ "${{ needs.container-scan.result }}" == "failure" ]]; then
-                echo "⚠️ **Security issues detected - see logs above**" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
-                echo "📋 Download artifacts for detailed reports" >> $GITHUB_STEP_SUMMARY
-                # exit 1  # ← COMMENTÉ pour l'analyse
-            else
-                echo "✅ All security checks passed!" >> $GITHUB_STEP_SUMMARY
-            fi
-
-  # ═══════════════════════════════════════
-  # 7. CODEQL - SAST officiel GitHub
+  # 6. CODEQL
   # ═══════════════════════════════════════
   codeql:
     name: 🔍 CodeQL
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript
-      
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
-      
       - name: Perform Analysis
         uses: github/codeql-action/analyze@v3
 
- # ═══════════════════════════════════════
-  # 8. SECURITY GATE - Bloque si vulnérabilités
+  # ═══════════════════════════════════════
+  # 7. SECURITY GATE
   # ═══════════════════════════════════════
   security-gate:
     name: 🚦 Security Gate
@@ -210,3 +161,25 @@ jobs:
           else
             echo "✅ Security Gate PASSED - No critical vulnerabilities"
           fi
+
+  # ═══════════════════════════════════════
+  # 8. FINAL REPORT (optionnel)
+  # ═══════════════════════════════════════
+  report:
+    name: 📊 Final Report
+    runs-on: ubuntu-latest
+    needs: [sast, sca, secrets, container-scan, codeql]
+    if: always()
+    steps:
+      - name: Generate Report
+        run: |
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SCA | ${{ needs.sca.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets | ${{ needs.secrets.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo ""
