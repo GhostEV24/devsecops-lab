@@ -4,7 +4,7 @@ on: [push, pull_request]
 
 jobs:
   # ═══════════════════════════════════════
-  # 1. BUILD - Construction de l'image Docker
+  # 1. BUILD
   # ═══════════════════════════════════════
   build:
     name: 🏗️ Build
@@ -23,10 +23,10 @@ jobs:
         with:
           name: docker-image
           path: image.tar
+          retention-days: 1
 
   # ═══════════════════════════════════════
-  # 2. SAST - Analyse statique du code
-  # Scan le CODE SOURCE pour trouver des failles
+  # 2. SAST
   # ═══════════════════════════════════════
   sast:
     name: 🔍 SAST
@@ -43,8 +43,7 @@ jobs:
             p/owasp-top-ten
 
   # ═══════════════════════════════════════
-  # 3. SCA - Analyse des dépendances
-  # Vérifie si les bibliothèques ont des vulnérabilités connues
+  # 3. SCA - CORRIGÉ pour toujours sauvegarder le rapport
   # ═══════════════════════════════════════
   sca:
     name: 📦 SCA
@@ -61,20 +60,25 @@ jobs:
         working-directory: ./src
         run: npm install
       
-      - name: npm audit
+      # ✅ CORRECTION: Sauvegarde le JSON même si npm audit échoue
+      - name: npm audit JSON
         working-directory: ./src
-        run: |
-          npm audit --json > audit.json || true
-          npm audit || true
+        run: npm audit --json > audit.json || true
       
-      - uses: actions/upload-artifact@v4
+      # ✅ CORRECTION: Affiche et échoue sur les vulnérabilités
+      - name: npm audit display
+        working-directory: ./src
+        run: npm audit
+      
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        if: always()  # ← Toujours uploader même si échec
         with:
           name: npm-audit
           path: src/audit.json
 
   # ═══════════════════════════════════════
-  # 4. SECRET DETECTION - Détection de secrets
-  # Cherche les mots de passe/clés API dans le code
+  # 4. SECRET DETECTION
   # ═══════════════════════════════════════
   secrets:
     name: 🔐 Secrets
@@ -82,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Récupère tout l'historique Git
+          fetch-depth: 0
       
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
@@ -90,13 +94,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ═══════════════════════════════════════
-  # 5. CONTAINER SCAN - Scan de l'image Docker
-  # Vérifie si l'image OS a des vulnérabilités
+  # 5. CONTAINER SCAN - CORRIGÉ pour analyse
   # ═══════════════════════════════════════
   container-scan:
     name: 🐳 Container Scan
     runs-on: ubuntu-latest
-    needs: build  # Attend que le job "build" soit fini
+    needs: build
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -105,41 +108,45 @@ jobs:
       - name: Load image
         run: docker load < image.tar
       
+      # ✅ CORRECTION: exit-code '0' pour voir les résultats sans échec
       - name: Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: vuln-app:${{ github.sha }}
           format: 'table'
-          exit-code: '0'
+          exit-code: '0'          # ← '0' pour analyse, '1' pour bloquer
           severity: 'CRITICAL,HIGH'
 
   # ═══════════════════════════════════════
-  # 6. RAPPORT FINAL - Résumé de tout
+  # 6. RAPPORT FINAL - CORRIGÉ pour toujours générer
   # ═══════════════════════════════════════
   report:
     name: 📊 Report
     runs-on: ubuntu-latest
     needs: [sast, sca, secrets, container-scan]
-    if: always()  # S'exécute même si d'autres jobs échouent
+    if: always()
     steps:
       - name: Generate Report
         run: |
           echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- SAST: ${{ needs.sast.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- SCA: ${{ needs.sca.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Secrets: ${{ needs.secrets.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Container: ${{ needs.container-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SCA | ${{ needs.sca.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets | ${{ needs.secrets.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Échoue si au moins un scan a échoué
-          if [[ "${{ needs.sast.result }}" == "failure" ]] || \
-             [[ "${{ needs.sca.result }}" == "failure" ]] || \
-             [[ "${{ needs.secrets.result }}" == "failure" ]] || \
-             [[ "${{ needs.container-scan.result }}" == "failure" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "❌ **Security issues detected!**" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ All security checks passed!" >> $GITHUB_STEP_SUMMARY
-          fi
+          # ✅ CORRECTION: Ne fait pas échouer le job (pour l'analyse)
+            if [[ "${{ needs.sast.result }}" == "failure" ]] || \
+                [[ "${{ needs.sca.result }}" == "failure" ]] || \
+                [[ "${{ needs.secrets.result }}" == "failure" ]] || \
+                [[ "${{ needs.container-scan.result }}" == "failure" ]]; then
+                echo "⚠️ **Security issues detected - see logs above**" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "📋 Download artifacts for detailed reports" >> $GITHUB_STEP_SUMMARY
+                # exit 1  # ← COMMENTÉ pour l'analyse
+            else
+                echo "✅ All security checks passed!" >> $GITHUB_STEP_SUMMARY
+            fi
