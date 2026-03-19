@@ -3,11 +3,10 @@ FROM node:22-alpine
 WORKDIR /app
 
 COPY src/package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --production && npm cache clean --force  # ← Changé ici
 
 COPY src/ ./
 
-# ✅ Utilisateur non-root
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
     chown -R nodejs:nodejs /app
